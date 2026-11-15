@@ -28,6 +28,15 @@ rl.on("line", (line) => {
     for (let i = 0; i < 256 * 240; i++) { const p = b[i]; buf[i * 3] = p & 0xff; buf[i * 3 + 1] = (p >> 8) & 0xff; buf[i * 3 + 2] = (p >> 16) & 0xff; }
     fs.writeFileSync(c.path, Buffer.concat([Buffer.from("P6\n256 240\n255\n"), buf]));
     out({ok: true});
+  } else if (c.op === "save") {          // the whole machine, to come back to (a checkpoint of the bot)
+    fs.writeFileSync(c.path, JSON.stringify({nes: z.nes.toJSON(), frames: z.frames}));
+    out({ok: true});
+  } else if (c.op === "load") {
+    const s = JSON.parse(fs.readFileSync(c.path, "utf8"));
+    z.nes.fromJSON(s.nes); z.frames = s.frames;
+    for (const b of held) z.nes.buttonUp(1, BTN[b]);
+    held = new Set();
+    out({ok: true});
   } else if (c.op === "warp") {          // a development shortcut: load a level and put Link in one of its rooms
     z.wr(0x10, c.level); z.wr(0x12, 2); z.wr(0x13, 0); z.wr(0x11, 0);
     z.runUntil(() => z.rd(0x12) === 5 && z.rd(0x11) === 1, 900); z.run(30);

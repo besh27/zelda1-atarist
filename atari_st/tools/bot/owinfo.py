@@ -12,15 +12,25 @@ ITEM = {0: "bombs", 1: "wood sword", 2: "white sword", 3: "magic sword", 4: "foo
 SECRET = {0: "-", 1: "bomb", 2: "burn", 3: "rock", 4: "grave"}
 
 
-def load(attrs: bytes):
-    """attrs: the six 128-byte tables A..F of the overworld level block."""
+def quest2_secrets() -> bytes:
+    """room_secrets as the Second Quest has it (the port ships the First Quest's and patches it in RAM)."""
+    import sys
+    sys.path.insert(0, str(HERE.parent))
+    import build_assets as B
+    root = HERE.parent.parent.parent
+    return B.decode_overworld(root, B.load_ow_background_tiles(root), 1)[11]
+
+
+def load(attrs: bytes, quest: int = 1):
+    """attrs: the six 128-byte tables A..F of the overworld level block, as the quest in play has them in RAM."""
     caves = (GEN / "cave_table.bin").read_bytes()
-    secrets = (GEN / "room_secrets.bin").read_bytes()
+    secrets = quest2_secrets() if quest == 2 else (GEN / "room_secrets.bin").read_bytes()
     out = {}
     for r in range(128):
         A, B, F = attrs[r], attrs[128 + r], attrs[640 + r]
         b = B & 0xFC
         info = {"entrance": (A & 0xF0, (F & 7) * 16 + 0x4D), "kind": None}
+        info["quest"] = F >> 6            # 1: the first quest's only, 2: the second's only (IsQuestSecretMismatch)
         if b and b < 0x40:
             info["kind"] = f"level {b >> 2}"
         elif b >= 0x40:

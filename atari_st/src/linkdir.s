@@ -225,7 +225,16 @@ link_edge:
     bsr uw_try_door_back
     tst.w %d0
     beq 90f
-    cmp.w #2, %d0
+    cmp.w #3, %d0
+    bne 51f
+    tst.b OFF_FALSE_WALL_T(%a5)        | a false wall: $18 frames of pushing first (TouchDoorFalse)
+    bne 52f
+    move.b #0x18, OFF_FALSE_WALL_T(%a5)
+    bra 90f
+52: cmp.b #1, OFF_FALSE_WALL_T(%a5)
+    bne 90f
+    bra 60f
+51: cmp.w #2, %d0
     beq 60f
     move.b %d1, OFF_LINK_DOORWAY(%a5)
     move.w %d3, %d2                 | into the doorway

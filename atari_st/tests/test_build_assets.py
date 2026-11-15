@@ -49,16 +49,26 @@ class LevelIncludeTests(unittest.TestCase):
     def test_boss_room_and_stairs_use_separate_level_record_bytes(self) -> None:
         level = SimpleNamespace(
             level=5, key="5", start_room=0x65, start_y=0xDD, triforce_room=0x14,
-            map_col0=2, cellar_info=[b""], boss_room=0x15, stairs_first=120,
+            map_col0=2, cellar_info=[b""], boss_room=0x15, stairs_first=120, shown_level=4,
         )
         record = build_assets.level_include([level]).split("level_table:\n", 1)[1]
         data = record.split("    .byte ", 1)[1].split("\n", 1)[0].strip()
         self.assertEqual(
             [int(value.strip(), 0) for value in data.split(",")],
-            [0x65, 0xDD, 0x14, 2, 1, 0x15, 120, 0],
+            [0x65, 0xDD, 0x14, 2, 1, 0x15, 120, 4],
         )
         self.assertIn('.asciz "LEVEL5.DAT"', record)       # then the name of the level's file
         self.assertEqual(build_assets.LEVEL_RECORD_BYTES, 8 + build_assets.LEVEL_NAME_BYTES)
+
+    def test_the_second_quest_shows_its_own_level_numbers(self) -> None:
+        # LevelInfo_LevelNumber: the Second Quest's dungeon 2 is shown as LEVEL-3, 3 as 2, 4 as 5, 5 as 4, 7 as 8, 8 as 7
+        root = Path(__file__).resolve().parents[2]
+        if not (root / "ext" / "Original.nes").exists():
+            self.skipTest("needs the ROM")
+        import underworld
+        shown = [underworld.level_info(root, n, quest)[underworld.LEVEL_INFO_LEVEL_NUMBER]
+                 for quest in (0, 1) for n in range(1, 10)]
+        self.assertEqual(shown, [1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 3, 2, 5, 4, 6, 8, 7, 9])
 
 
 class ExtractionTests(unittest.TestCase):

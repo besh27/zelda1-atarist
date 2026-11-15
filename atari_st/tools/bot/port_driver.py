@@ -160,6 +160,18 @@ class Port:
         rows, palette = SS.decode_screen(b"\0" * base + screen, base, words)
         SS.write_png(Path(path), rows, palette)
 
+    def save(self, path: Path) -> None:
+        """The whole emulation (Hatari's statesave), to go back to it later with load."""
+        path = Path(path).resolve()
+        path.unlink(missing_ok=True)                  # Hatari asks before it overwrites a file
+        path.with_name(path.name + ".debug").unlink(missing_ok=True)
+        self.cmd(f"statesave {path}")
+
+    def load(self, path: Path) -> None:
+        self.cmd(f"stateload {Path(path).resolve()}")
+        self.held = {code: -1 for code in KEYS.values()}     # write every key again on the next step
+        self.cont()                                           # the state is put back as the emulation goes on
+
     def crashed(self) -> bool:
         return self.exceptions > 0
 

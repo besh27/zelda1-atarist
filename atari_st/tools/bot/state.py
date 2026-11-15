@@ -27,6 +27,7 @@ class Enemy:
     y: int
     ntype: int            # NES object type
     hp: int = 0
+    dormant: bool = False  # a wallmaster still inside the wall (state 0): nothing can touch it
 
 
 @dataclass
@@ -79,7 +80,7 @@ def nes_state(n) -> State:
     for i in range(1, 12):
         t = m[R_TYPE + i]
         if 0 < t < 0x4B and m[R_META + i] == 0:
-            s.enemies.append(Enemy(i, m[R_X + i], m[R_Y + i], t, m[R_HP + i]))
+            s.enemies.append(Enemy(i, m[R_X + i], m[R_Y + i], t, m[R_HP + i], t == 0x27 and m[0xAC + i] == 0))
         elif 0 < t < 0x4B and m[R_META + i] in (1, 2, 3):
             s.spawning += 1
     return s
@@ -124,9 +125,13 @@ def port_state(p, tables: PortTables) -> State:
     s.triforce = v("TRIFORCE_PIECES")
     for i in range(v("ENEMY_COUNT")):
         if v("ENEMY_ACTIVE", i) == 1 and v("ENEMY_CLOUD", i) == 0:
-            s.enemies.append(Enemy(i, v("ENEMY_X", i), v("ENEMY_Y", i), tables.ntype(v("ENEMY_TYPE", i)), v("ENEMY_HP", i)))
+            t = tables.ntype(v("ENEMY_TYPE", i))
+            s.enemies.append(Enemy(i, v("ENEMY_X", i), v("ENEMY_Y", i), t, v("ENEMY_HP", i),
+                                   t == 0x27 and v("ENEMY_STATE", i) == 0))
         elif v("ENEMY_CLOUD", i) in (1, 2, 3):
             s.spawning += 1
+    if s.level and v("GRUMBLE_ON"):
+        s.enemies.append(Enemy(99, 0x78, 0x80, 0x36))      # the port keeps Grumble out of the monster slots
     return s
 
 

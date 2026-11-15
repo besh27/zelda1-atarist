@@ -13,6 +13,7 @@ from owmap import OWGraph
 
 _graph = None
 _info = None
+QUEST = 1               # the quest in play (run.py --quest 2 sets it before anything is read)
 MAZES = (0x61, 0x1B)
 # SecretArmosRoomIds and the X of the armos over the stairs (row 4), as owspec.s has them
 ARMOS = {0x24: 0xE0, 0x0B: 0xB0, 0x1C: 0xB0, 0x22: 0x30, 0x34: 0x40, 0x3D: 0x90, 0x4E: 0xA0}      # the Lost Woods and the Lost Hills loop back on themselves
@@ -21,7 +22,7 @@ ARMOS = {0x24: 0xE0, 0x0B: 0xB0, 0x1C: 0xB0, 0x22: 0x30, 0x34: 0x40, 0x3D: 0x90,
 def graph() -> OWGraph:
     global _graph
     if _graph is None:
-        _graph = OWGraph(1)
+        _graph = OWGraph(QUEST)
     return _graph
 
 
@@ -36,7 +37,7 @@ def info(side: Side) -> dict:
             for i, t in ((0, "a"), (1, "b"), (5, "f")):
                 attrs[i * 128:(i + 1) * 128] = d.peek_mem(d.base + d.sym[f"room_attr_{t}"], 128)
             attrs = bytes(attrs)
-        _info = owinfo.load(attrs)
+        _info = owinfo.load(attrs, QUEST)
     return _info
 
 
@@ -248,7 +249,9 @@ def reveal(side: Side, room: int) -> None:
                 break
         else:
             raise Stuck(f"{side.name}: no place to stand by the bush in {room:02X}")
-    elif kind in ("push", "armos"):
+    elif kind in ("push", "armos", "rock", "grave"):
+        if kind == "rock" and not side.s.items[14]:
+            side.give_item(14, 1, "the bracelet, to push the rock")
         for (dr, dc, d) in ((1, 0, UP), (-1, 0, DOWN), (0, -1, RIGHT), (0, 1, LEFT)):
             stand = sq_node(row + dr, col + dc)
             if side.node_free(*stand) and side.path({stand}) is not None:
@@ -296,12 +299,20 @@ ROUTES = {"gathering": GATHERING}
 
 # -- dungeons ------------------------------------------------------------------------------------------------------------
 LEVEL_SCREENS = {1: 0x37, 2: 0x3C, 3: 0x74, 4: 0x45, 5: 0x0B, 6: 0x22, 7: 0x42, 8: 0x6D, 9: 0x05}
+# the Second Quest's, from its level block (attribute B; where two screens name a level, the one that is the second's only)
+LEVEL_SCREENS2 = {1: 0x37, 2: 0x3C, 3: 0x34, 4: 0x45, 5: 0x1B, 6: 0x30, 7: 0x19, 8: 0x6C, 9: 0x00}
+
+
+def find_stairs(side: Side):
+    t = side.get_tiles(force=True)
+    return [(c * 8, r * 8 + 0x40 - 0x0B + 8) for r in range(21) for c in range(31)
+            if t[r][c] == 0x70 and t[r][c + 1] == 0x72 and t[r + 1][c] == 0x71]
 
 
 def enter_level(side: Side, n: int) -> None:
-    room = LEVEL_SCREENS[n]
+    room = (LEVEL_SCREENS2 if QUEST == 2 else LEVEL_SCREENS)[n]
     goto_screen(side, room)
-    if n == 7:
+    if QUEST == 1 and n == 7:
         # the pond of Level 7 dries up at the recorder's tune and shows the stairs
         if not side.s.items[5]:
             raise Stuck(f"{side.name}: the recorder is needed for Level 7")
@@ -312,9 +323,20 @@ def enter_level(side: Side, n: int) -> None:
         side.walk_extra[room] = set(range(0x8D, 0x99))   # the dry bed of the pond
     reveal(side, room)
     ex, ey = entrance(side, room)
-    t = side.get_tiles(force=True)
-    stairs = [(c * 8, r * 8 + 0x40 - 0x0B + 8) for r in range(21) for c in range(31)
-              if t[r][c] == 0x70 and t[r][c + 1] == 0x72 and t[r + 1][c] == 0x71]
+    stairs = find_stairs(side)
+    if QUEST == 2 and not stairs and room in (0x3C, 0x30) and not (room in ARMOS or "secret" in info(side)[room]):
+        # the Second Quest hides these stairs from the recorder's tune (the ROM's flute secrets)
+        if not side.s.items[5]:
+            side.give_item(5, 1, "the recorder, for the stairs of level %d" % n)
+        side.hold_until({UP}, lambda st: st.y < 0xC0, 60)     # in from the screen's edge first
+        side.select_b("flute")
+        side.press("B", 2, 400)
+        side.wait_play(1200)
+        side.walk_extra[room] = set(range(0x8D, 0x99))   # the pond's bed, dry now (a change of colour, not of tiles)
+        stairs = find_stairs(side)
+        if stairs:
+            ex, ey = stairs[0]
+        side.log(f"{side.name}: played the recorder in {room:02X}: stairs {stairs}")
     if stairs and not any(abs(ex - x) < 16 and abs(ey - y) < 16 for x, y in stairs):
         ex, ey = stairs[0]                  # stairs on show that the attributes do not place (the pond of Level 7)
         side.log(f"{side.name}: the stairs of level {n} are at ({ex},{ey})")
@@ -330,6 +352,10 @@ def play_level(side: Side, n: int) -> None:
     import dungeon
     if side.s.level != n:
         enter_level(side, n)
+    if QUEST == 2 and n == 9 and side.s.items[2] < 2:
+        # the bot loses its way in the Second Quest's Level 9 before it finds the silver arrow: a cheat, so that it
+        # goes on to Ganon and Zelda
+        side.give_item(2, 2, "the silver arrow")
     dungeon.explore(side)
     if getattr(side, "won", False):
         return                                  # Zelda's thanks and the credits: the game is over
@@ -383,3 +409,29 @@ ROUTES["level9"] = [T("everything", cheat_all), T("Level 9", partial(play_level,
 ROUTES["all"] = ROUTES["gathering"] + [T(f"Level {n}", partial(play_level, n=n)) for n in range(1, 10)]
 for _n in range(1, 10):     # one level on its own, with everything in hand (a cheat): "only4"
     ROUTES[f"only{_n}"] = [T("everything", cheat_all), T(f"Level {_n}", partial(play_level, n=_n))]
+
+
+# -- the Second Quest ------------------------------------------------------------------------------------------------
+# the overworld's caves as the second quest has them (owinfo with quest 2): the sword, hearts, the white sword, the
+# letter and the shops, then the nine levels in order; the magic sword before Level 9
+GATHERING2 = [
+    T("wooden sword (cave of the start screen, $77)", partial(visit_cave, room=0x77, take=1)),
+    T("bombs ($6F shop)", partial(visit_cave, room=0x6F, take=1, money=40)),
+    T("heart container (gravestone, $20)", partial(visit_cave, room=0x20, take=2)),
+    T("letter (rock, $11)", partial(visit_cave, room=0x11, take=1)),
+    T("blue candle ($0C shop)", partial(visit_cave, room=0x0C, take=2, money=80)),
+    T("arrows ($4A shop)", partial(visit_cave, room=0x4A, take=2, money=100)),
+    T("magic shield ($0C shop)", partial(visit_cave, room=0x0C, take=0, money=180)),
+    T("100 rupees (burnt bush, $53)", partial(visit_cave, room=0x53, take=1)),
+    T("potion shop, letter shown ($64)", partial(visit_cave, room=0x64, take=2, money=80, show_letter=True)),
+]
+ROUTES["gathering2"] = GATHERING2
+# in the order the Second Quest numbers them on the screen ("LEVEL-n", LevelInfo_LevelNumber), which is the order
+# their items are needed in: the recorder of dungeon 3 for dungeon 2's stairs, the raft of 5 for 4, the ladder of 8 for 7
+ORDER2 = (1, 3, 2, 5, 4, 6, 8, 7)
+ROUTES["all2"] = GATHERING2 + [T(f"Level {n}", partial(play_level, n=n)) for n in ORDER2[:2]] + [
+    T("white sword ($0A)", partial(visit_cave, room=0x0A, take=1))] + [
+    T(f"Level {n}", partial(play_level, n=n)) for n in ORDER2[2:]] + [
+    T("magic sword (rock, $09)", partial(visit_cave, room=0x09, take=1)),
+    T("Level 9", partial(play_level, n=9))]
+ROUTES["levels2"] = [T("kit", cheat_kit)] + [T(f"Level {n}", partial(play_level, n=n)) for n in range(1, 10)]

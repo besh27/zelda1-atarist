@@ -222,9 +222,20 @@ def fight(side: Side, limit: int = 2400, keep_going=lambda s: True) -> bool:
             side.step((), 10)                # more on the way (spawn clouds, Digdogger splitting at the tune)
             spent += 10
             continue
+        if targets and all(e.dormant for e in targets) and keep_going(side.s):
+            # wallmasters inside the walls: stand against a wall (within its length) until they come out
+            spot = ((0x20, 0x7D), (0xD0, 0x9D))[(spent // 200) % 2]
+            try:
+                side.walk({spot}, limit=300)
+            except Stuck:
+                pass
+            side.step((), 30)
+            spent += 60
+            continue
         if not targets or not keep_going(side.s):
             return not targets
         s = side.s
+        targets = [e for e in targets if not e.dormant]
         t = min(targets, key=lambda e: abs(e.x - s.x) + abs(e.y - s.y))
         dx, dy = t.x - s.x, t.y - s.y
         below_only = t.ntype in GOHMA                 # Gohma's eye looks down: arrows from above hit his shell
@@ -306,7 +317,10 @@ def strike(side: Side, t, d: str) -> int:
         side.select_b("bomb")
         side.press("B", 2, 2)
         back = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}[d]
-        side.step({back}, 20)
+        for _ in range(20):               # away from the blast, but not out through a doorway behind him
+            if at_door_edge(side, back) or not (0x20 <= side.s.x <= 0xD0 and 0x5D <= side.s.y <= 0xBD):
+                break
+            side.step({back}, 1)
         side.step((), 50)                 # the bomb goes off; a stunned Dodongo falls to the sword
         side.step({d}, 1)
         for _ in range(3):
@@ -322,6 +336,11 @@ def strike(side: Side, t, d: str) -> int:
             side.select_b("bow")
             side.press("B", 2, 10)
         return 20
+    if w == "bow" and t.ntype in GOHMA and not (side.s.items[3] and side.s.items[2]):
+        if not side.s.items[3]:
+            side.give_item(3, 1, "the bow, for Gohma")
+        if not side.s.items[2]:
+            side.give_item(2, 1, "arrows, for Gohma")
     if w == "bow" and side.s.items[3]:
         if side.s.rupees < 10:
             side.give("rupees", 100)
@@ -479,6 +498,9 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
     fails, bad = collections.Counter(), set()   # doors that would not open: tried three times, then left alone
     cut = set()             # (room, door, side he came in by): blocks or water keep that part of the room from the door
     retries = 0
+    cheats = 0              # times Link was put by a door he could not walk to
+    decided = collections.Counter()     # the moves chosen in each room: one chosen over and over is a loop
+    paid = set()            # rooms of the "life or money" man (trigger 6) whose price was paid
     done_all = set()        # nothing else can be reached: the triforce now, though rooms are left unseen
     arrival, last_room = 0, None
     for _ in range(limit_rooms):
@@ -513,7 +535,8 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
             if DEBUG:
                 side.log(f"{side.name}: room {room:02X}: fighting " + " ".join(f"{e.ntype:02X}@{e.x},{e.y}" for e in foes(side)))
             try:
-                fight(side, limit=2000)
+                bosses = any(e.ntype in DODONGO + DIGDOGGER + GOHMA + (GANON,) for e in foes(side))
+                fight(side, limit=9000 if bosses else 2000)      # three Dodongos at once, or Ganon, take a while
             except Stuck as e:
                 side.log(f"{side.name}: {e} (fighting)")
             if DEBUG:
@@ -531,9 +554,18 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
         if lvl.number == 9 and room == lvl.triforce and not foes(side):
             if rescue_zelda(side):
                 return
+        if (lvl.f[room] & 7) == 6 and room not in paid and not foes(side):
+            try:
+                pay_toll(side, room)
+            except Stuck as e:
+                side.log(f"{side.name}: {e} (paying)")
+            paid.add(room)
         if room != last_room:
             arrival += 1                    # the room is laid out afresh on each visit: the block is back, the shutters shut
             last_room = room
+            side.checkpoint(f"L{lvl.number}_{arrival:03d}_{room:02X}")
+            if os.environ.get("BOT_ROOMSHOTS"):
+                side.drv.snapshot(Path(os.environ["BOT_ROOMSHOTS"]) / f"{side.name}_L{lvl.number}_{arrival:03d}_{room:02X}.png")
         opened = False
         if (lvl.d[room] & 0x40) and (room, arrival) not in pushed and not foes(side):
             if push_block(side):
@@ -567,6 +599,28 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
             side.log(f"{side.name}: level {lvl.number}: nothing else to reach; the triforce")
             done_all.add(lvl.number)
             continue
+        if nxt is None and cheats < 6 and not side.s.triforce & (1 << (lvl.number - 1)):
+            # blocks or water cut him off from every door he needs (a block that is back on each visit): a cheat,
+            # Link put on the floor by the door the plan would take if nothing were cut off
+            free = plan(lvl, room, visited, used_stairs, taken)
+            if free and free[0] == "door":
+                cheats += 1
+                d = free[1]
+                x, y = DOOR_NODE[d]
+                x, y = {N: (x, y + 8), S: (x, y - 8), W: (x + 8, y), E: (x - 8, y)}[d]
+                side.log(f"{side.name}: room {room:02X} is cut off from its {DOOR_DIR[d]} door: cheat, Link put by it")
+                place(side, x, y)
+                cut = {c for c in cut if c[0] != room}
+                bad.discard((room, d))
+                fails[(room, d)] = 0
+                try:
+                    went = go_through(side, lvl, d)
+                except Stuck as e:
+                    side.log(f"{side.name}: {e} (going {DOOR_DIR[d]} after the cheat)")
+                    went = False
+                if not went:
+                    bad.add((room, d))
+                continue
         if nxt is None:
             left = sorted(r for r in level_rooms(lvl) if r not in visited)
             side.log(f"{side.name}: level {lvl.number}: nothing left to do from room {room:02X}; not seen "
@@ -575,6 +629,14 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
                      + "; worn " + " ".join(f"{r:02X}" for r in sorted(worn)))
             return
         kind, arg = nxt
+        decided[(room, kind, arg)] += 1
+        if kind == "door" and decided[(room, kind, arg)] > 8:
+            # back and forth between two rooms (a block pushed again on every visit, and the plan none the wiser):
+            # that door is left alone from here
+            side.log(f"{side.name}: room {room:02X}: {DOOR_DIR[arg]} again and again; left alone")
+            bad.add((room, arg))
+            decided[(room, kind, arg)] = 0
+            continue
         side.log(f"{side.name}: room {room:02X}: {kind} {arg}" + (f" at ({side.s.x},{side.s.y}) entry {entry}" if DEBUG else ""))
         if kind == "door":
             try:
@@ -618,6 +680,7 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
             if node is None:
                 side.log(f"{side.name}: no stairs on show in room {room:02X}")
                 used_stairs.add(room)
+                stair_uses[room] += 2           # twice with none on show: leave them alone (worn)
                 continue
             used_stairs.add(room)
             stair_uses[room] += 1
@@ -627,6 +690,18 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
                 side.log(f"{side.name}: {e} (to the stairs)")
                 continue
             side.hold_until((), lambda st: st.room != room, 300)
+
+
+def pay_toll(side: Side, room: int) -> None:
+    """The man who wants a heart container or 50 rupees (trigger 6): the rupees, the ware at X $98; the shutters open."""
+    if side.s.rupees < 60:
+        side.give("rupees", 100)
+    side.step((), 120)                     # he speaks first
+    before = side.s.rupees
+    side.walk({(0x98, 0xAD), (0x98, 0xA5)}, limit=1500)
+    side.hold_until({UP}, lambda st: st.rupees != before or st.y <= 0x98, 120)
+    side.step((), 120)
+    side.log(f"{side.name}: paid in room {room:02X}: rupees {before} -> {side.s.rupees}")
 
 
 def done_but_triforce(lvl: Level, visited, taken) -> bool:

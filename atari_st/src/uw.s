@@ -819,8 +819,8 @@ uw_open_door_pair:
 
 | Link is pushing against a doorway.
 |
-| d1.b = direction. Returns d0.w = 1 when he may walk through the doorway, 2 for a false wall or a bombed
-| hole (he leaves the room at once), 0 when not. A locked door opens (and uses a key) instead of passing him
+| d1.b = direction. Returns d0.w = 1 when he may walk through the doorway, 2 for a bombed hole (he leaves the
+| room at once), 3 for a false wall (the same, after $18 frames of pushing: link_pixel), 0 when not. A locked door opens (and uses a key) instead of passing him
 | on the same frame.
 uw_try_door:
     movem.l %d1-%d6/%a0-%a2, -(%sp)
@@ -892,7 +892,7 @@ uw_try_door:
 21: cmpi.b #1, %d6
     beq 8f                          | a solid wall
     cmpi.b #4, %d6
-    blo 13f                         | a false wall can be walked through
+    blo 16f                         | a false wall can be walked through
     uwlea OPEN, %a2
     move.b 0(%a2, %d0.w), %d5
     btst %d2, %d5
@@ -913,7 +913,9 @@ uw_try_door:
     bsr uw_redraw_room
     bra 8f
 
-13: moveq #2, %d4                   | a false wall or a hole: he goes straight into the next room (TouchDoor)
+13: moveq #2, %d4                   | a hole: he goes straight into the next room (TouchDoor)
+    bra 15f
+16: moveq #3, %d4                   | a false wall: the same, once he has pushed against it a while (link_pixel)
     bra 15f
 9:  moveq #1, %d4                   | a doorway: he walks through its frame first (CheckDoorway)
 15: cmp.w #2, %d2
@@ -961,7 +963,7 @@ uw_select_level:
     ltab level_table, %a0
     adda.w %d0, %a0
     move.l (%a0)+, OFF_UWL_BYTES(%a5)   | start room, start Y, triforce room, minimap column
-    move.l (%a0)+, (OFF_UWL_BYTES + 4)(%a5)     | cellar count, boss room, stairs, padding
+    move.l (%a0)+, (OFF_UWL_BYTES + 4)(%a5)     | cellar count, boss room, stairs, the digit of "LEVEL-n"
     cmp.w OFF_LOAD_KEY(%a5), %d2
     beq 3f                              | the buffer holds this level's file already
     bsr music_stop_far                  | a drum sample would fight the disk for the processor

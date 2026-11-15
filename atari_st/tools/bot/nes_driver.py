@@ -44,6 +44,13 @@ class Nes:
         for i, v in enumerate(values):
             self.mem[addr + i] = v & 0xff
 
+    def save(self, path) -> None:
+        self._call({"op": "save", "path": str(Path(path).resolve())})
+
+    def load(self, path) -> None:
+        self._call({"op": "load", "path": str(Path(path).resolve())})
+        self.step(set(), 0)
+
     def warp(self, level: int, room: int) -> None:
         self._call({"op": "warp", "level": level, "room": room})
         self.step(set(), 1)

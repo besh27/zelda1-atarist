@@ -73,9 +73,11 @@ draw_hud_level:
     move.b 0(%a0, %d4.w), %d0           | the NES code of the letter
     cmp.w #6, %d4
     blo 2f
-    move.b OFF_LEVEL(%a5), %d0          | the digit
-    bne 2f
-    moveq #0x24, %d0                    | no level: a space
+    tst.b OFF_LEVEL(%a5)
+    beq 4f
+    move.b OFF_UW_SHOWN_LEVEL(%a5), %d0 | the digit (LevelInfo_LevelNumber)
+    bra 3f
+4:  moveq #0x24, %d0                    | no level: a space
     bra 3f
 2:  tst.b OFF_LEVEL(%a5)
     bne 3f

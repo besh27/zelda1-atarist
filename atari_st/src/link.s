@@ -8,7 +8,10 @@
 
 link_update:
     movem.l %d0-%d6, -(%sp)
-    tst.b OFF_LINK_HELD(%a5)
+    tst.b OFF_FALSE_WALL_T(%a5)         | Link's object timer, as TouchDoorFalse uses it
+    beq 01f
+    subq.b #1, OFF_FALSE_WALL_T(%a5)
+01: tst.b OFF_LINK_HELD(%a5)
     bne 9f                      | a wallmaster is carrying him
     tst.b OFF_LINK_EATEN(%a5)
     bne 9f                      | a like-like has him: he can only swing
@@ -129,6 +132,15 @@ link_pixel:
     bra 5f                      | and he keeps facing the wall
 4:  bsr block_push_tick_f         | a block may give way
     bsr uw_try_door             | a locked door may open
+    cmp.w #3, %d0
+    bne 5f
+    tst.b OFF_FALSE_WALL_T(%a5)        | a false wall (drawn as wall): pushed against for $18 frames, it lets him
+    bne 41f                             | through into the next room (TouchDoorFalse)
+    move.b #0x18, OFF_FALSE_WALL_T(%a5)
+    bra 5f
+41: cmp.b #1, OFF_FALSE_WALL_T(%a5)
+    bne 5f
+    bsr start_scroll
     bra 5f
 3:  bsr grid_distance
     move.b %d0, OFF_COMMIT(%a5)
@@ -326,8 +338,10 @@ read_input_dir:
 link_collide:
     movem.l %d1-%d5, -(%sp)
     tst.b OFF_UW_PERSON(%a5)
+    bne 03f
+    tst.b OFF_GRUMBLE_ON(%a5)           | Grumble too, until he is fed (CheckPersonBlocking takes type $36)
     beq 0f
-    btst #3, %d1                | DIR_UP: the old man is in the way
+03: btst #3, %d1                | DIR_UP: the old man is in the way: no step up above Y $8E anywhere in the room
     beq 0f
     cmpi.b #0x8e, OFF_LINK_Y(%a5)
     bhs 0f
@@ -408,20 +422,7 @@ link_collide:
     cmp.w #(PLAY_AREA_ROWS - 1), %d2
     bls 8f
     moveq #(PLAY_AREA_ROWS - 1), %d2
-8:  tst.b OFF_GRUMBLE_ON(%a5)
-    beq 80f
-    cmp.w #14, %d3                      | Grumble stands in the way: the squares around ($78, $80)
-    blo 80f
-    cmp.w #16, %d3
-    bhi 80f
-    cmp.w #8, %d2
-    blo 80f
-    cmp.w #9, %d2
-    bhi 80f
-    moveq #1, %d0
-    movem.l (%sp)+, %d1-%d5
-    rts
-80: bsr fetch_tile
+8:  bsr fetch_tile
     move.w %d0, %d5
     move.b %d3, OFF_HOT_COL(%a5)        | where that tile is (an armos is woken by it)
     move.b %d2, OFF_HOT_ROW(%a5)

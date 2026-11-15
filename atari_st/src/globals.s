@@ -333,6 +333,7 @@
     .equ OFF_UW_CELLARS, OFF_UWL_BYTES + 4
     .equ OFF_UW_BOSS_ROOM, OFF_UWL_BYTES + 5
     .equ OFF_UW_STAIRS_ID, OFF_UWL_BYTES + 6     | the first of the four stairs tiles in the level's bank (0 = none)
+    .equ OFF_UW_SHOWN_LEVEL, OFF_UWL_BYTES + 7   | the digit of "LEVEL-n" (LevelInfo_LevelNumber: not the dungeon's number in the Second Quest)
 
     | A Dodongo is two sprites wide: the second one's erase offsets, and Moldorm's chain fields.
     galign
@@ -539,6 +540,7 @@
     gvar COLLIDE_PURE, 1        | link_collide only looks: the ladder is not put down
     gvar LINK_DOORWAY, 1        | the doorway Link is in (DoorwayDir: its direction bit), 0 in the room
     gvar LINK_AUTOWALK, 1       | pixels left of the walk in from the screen's edge after a room's scroll (mode 4)
+    gvar FALSE_WALL_T, 1        | frames he has yet to push against a false wall before it lets him through (TouchDoorFalse: $18)
     galign
     gvar IVP, 68                 | where each table of INTRO.DAT is while the buffer holds it (INTRO_TABLE_COUNT longs; ivtab, loader.s)
     .equ GLOBALS_BYTES, gvar_offset

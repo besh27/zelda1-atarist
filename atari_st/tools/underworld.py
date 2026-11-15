@@ -67,6 +67,7 @@ class UwData:
     level: int
     triforce_room: int = 0    # LevelInfo_TriforceRoomId: where the compass marker points
     boss_room: int = 0        # LevelInfo_BossRoomId: the room whose clearing ends the boss's ambient roar
+    shown_level: int = 0      # LevelInfo_LevelNumber: the digit of "LEVEL-n" (the Second Quest numbers its dungeons its own way)
     map_col0: int = 0         # room column drawn in the minimap's first column
     actors: object = None
     cellar_maps: tuple = ()   # UW_ROOM_BYTES row-major bank ids per cellar
@@ -85,6 +86,9 @@ def level_key(level: int, quest: int = 0) -> str:
 
 
 QUEST_INFO_FIRST = 0x6BA7 - B.LEVEL_INFO_BASE      # LevelInfo_ShortcutOrItemPosArray: where UpdateMode2Load_Full copies the replacements
+
+
+LEVEL_INFO_LEVEL_NUMBER = 0x33     # LevelInfo_LevelNumber ($6BB1): the digit UpdateMode2Load patches into "LEVEL-X"
 
 
 def level_info(source_root: Path, level: int, quest: int = 0) -> bytes:
@@ -605,6 +609,7 @@ def build_level(source_root: Path, level: int, bg_tiles, ow_palette_bytes: bytes
         level=level,
         triforce_room=info[B.LEVEL_INFO_TRIFORCE_ROOM_ID],
         boss_room=info[B.LEVEL_INFO_BOSS_ROOM_ID],
+        shown_level=info[LEVEL_INFO_LEVEL_NUMBER],
         map_col0=minimap_first_column(stored),
         actors=actors.build_actors(
             source_root, level, bg_tiles, ow_map, stored, (attrs[2], attrs_d, attrs[4], attrs[5]), info, ow_sprite_tiles,

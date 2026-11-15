@@ -88,6 +88,43 @@ class Side:
         self.log(f"{self.name}: cheat {what} = {value}")
         self.step((), 1)
 
+    def checkpoint(self, tag: str) -> None:
+        """Save the machine (and what the bot keeps beside it) under BOT_CKPT, as <side>_t<task>_<tag>, to start a
+        later run from here (run.py --load); the oldest are deleted beyond the last 60."""
+        import json
+        import os
+        d = os.environ.get("BOT_CKPT")
+        if not d:
+            return
+        d = Path(d)
+        d.mkdir(parents=True, exist_ok=True)
+        name = f"{self.name}_t{getattr(self, 'task', 0):02d}_{tag}"
+        self.drv.save(d / (name + ".sav"))
+        (d / (name + ".json")).write_text(json.dumps({
+            "walk_extra": {str(k): sorted(v) for k, v in self.walk_extra.items()},
+            "avoid": [[a, b, list(c)] for a, b, c in self.avoid], "frames": self.frames}))
+        mine = sorted((p for p in d.glob(f"{self.name}_t*.sav") if not p.stem.endswith("_start")),
+                      key=lambda p: p.stat().st_mtime)
+        for old in mine[:-int(os.environ.get("BOT_CKPT_KEEP", "60"))]:
+            old.unlink(missing_ok=True)
+            old.with_suffix(".json").unlink(missing_ok=True)
+            old.with_name(old.name + ".debug").unlink(missing_ok=True)
+
+    def restore(self, path: Path) -> None:
+        import json
+        self.drv.load(path)
+        extra = json.loads(path.with_suffix(".json").read_text())
+        self.walk_extra = {int(k): set(v) for k, v in extra["walk_extra"].items()}
+        self.avoid = {(a, b, tuple(c)) for a, b, c in extra["avoid"]}
+        self.refresh()
+        self.tiles_key = None
+
+    def give_item(self, slot: int, value: int, why: str = "") -> None:
+        """Set one of the ROM's item slots on this side (a cheat, logged)."""
+        (self.drv.poke(ST.R_ITEMS + slot, value) if self.name == "NES" else self.drv.poke("ITEMS", value, slot))
+        self.log(f"{self.name}: cheat item slot {slot:#04x} = {value}" + (f" ({why})" if why else ""))
+        self.step((), 1)
+
     def select_b(self, item: str) -> None:
         rom, port = B_SLOTS[item]
         if self.name == "NES":
@@ -115,7 +152,7 @@ class Side:
         if not 0 <= row < 22:
             return False
         c = x >> 3
-        if self.s.level and x % 16 == 0 and y % 16 == 13 and 0x70 <= tiles[row][c] <= 0x73:
+        if x % 16 == 0 and y % 16 == 13 and 0x70 <= tiles[row][c] <= 0x73:
             return False             # the stairs square itself takes him down (check_warps): only as a goal
         return self.walkable(tiles[row][c]) and self.walkable(tiles[row][min(c + 1, 31)])
 

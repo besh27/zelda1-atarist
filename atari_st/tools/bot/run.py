@@ -24,10 +24,12 @@ from port_driver import Port  # noqa: E402
 import routes  # noqa: E402
 
 PROJECT = HERE.parent.parent
-COMPARE_SLOTS = [i for i in range(32) if i not in range(22, 29)]   # 22-28 are rupees, keys, hearts, triforce... in the ROM
+# 22-28 are rupees, keys, hearts, triforce... in the ROM; 1 (bombs) is also counted by the random drops
+RESUMED = False
+COMPARE_SLOTS = [i for i in range(32) if i not in range(22, 29) and i != 1]
 
 
-def build_port(out: Path, start: tuple[int, int] | None = None) -> Path:
+def build_port(out: Path, start: tuple[int, int] | None = None, quest: int = 1) -> Path:
     """The port as it ships, or (start = level, room) a build that begins in that dungeon room."""
     import subprocess
     env = dict(os.environ)
@@ -36,17 +38,28 @@ def build_port(out: Path, start: tuple[int, int] | None = None) -> Path:
         env.pop(var, None)
     if start:
         env["ZELDA_START_LEVEL"], env["ZELDA_START_UW"] = str(start[0]), f"0x{start[1]:02X}"
+        if quest == 2:
+            env["ZELDA_QUEST"] = "2"
     subprocess.run(["make", "-C", str(PROJECT), f"BUILD_DIR={out}", f"{out}/ZELDAST.PRG"], check=True, env=env,
                    stdout=subprocess.DEVNULL)
     return out / "ZELDAST.PRG"
 
 
-def new_game(side: Side) -> None:
-    """Title, register a name (one letter), start: the same NES buttons on both sides."""
+# the name ZELDA on the board (the cursor starts on A): the Second Quest
+ZELDA = ["DOWN", "DOWN", "RIGHT", "RIGHT", "RIGHT", "A", "UP", "UP", "RIGHT", "A", "DOWN", "LEFT", "LEFT", "LEFT", "LEFT",
+         "A", "UP", "RIGHT", "RIGHT", "RIGHT", "A", "LEFT", "LEFT", "LEFT", "A"]
+
+
+def new_game(side: Side, quest: int = 1) -> None:
+    """Title, register a name (one letter, or ZELDA for the Second Quest), start: the same NES buttons on both sides."""
     side.cheat = False
     side.step((), 120)
-    for b in ["START", None, "START", None, "A", None, "SELECT", None, "SELECT", None, "SELECT", None, "START", None,
+    name = ["A", None] if quest == 1 else [x for b in ZELDA for x in (b, "gap")]
+    for b in ["START", None, "START", None] + name + ["SELECT", None, "SELECT", None, "SELECT", None, "START", None,
               "START"]:
+        if b == "gap":
+            side.step((), 10)
+            continue
         side.step({b} if b else (), 2 if b else 40)
     side.wait_play(600)
     side.step((), 30)
@@ -95,9 +108,17 @@ def load_kit(side: Side, kit) -> None:
 
 def compare(a: ST.State, b: ST.State) -> list[str]:
     diffs = []
-    if abs(a.rupees - b.rupees) > 30:       # small differences come from the monsters' random drops
+    if abs(a.rupees - b.rupees) > 80:       # differences come from the monsters' random drops (and longer fights)
         diffs.append(f"rupees: NES {a.rupees} ST {b.rupees}")
-    for f in ("mode", "level", "room", "keys", "containers", "triforce"):
+    if abs(a.keys - b.keys) > 2:            # keys too are dropped by monsters now and then
+        diffs.append(f"keys: NES {a.keys} ST {b.keys}")
+    if (a.items[1] == 0) != (b.items[1] == 0):
+        diffs.append(f"bombs: NES {a.items[1]} ST {b.items[1]}")
+    for f in ("mode", "level", "room", "containers", "triforce"):
+        if f == "room" and a.level == 0 and b.level == 0 and a.mode != b.mode:
+            continue
+        if f == "room" and a.level == 0 and b.level == 0 and RESUMED:
+            continue            # a level begun by a warp (--resume) is left by the screen the warp did not set
         if getattr(a, f) != getattr(b, f):
             diffs.append(f"{f}: NES {getattr(a, f)} ST {getattr(b, f)}")
     for i in COMPARE_SLOTS:
@@ -114,10 +135,16 @@ def main() -> None:
     ap.add_argument("--from-task", type=int, default=0)
     ap.add_argument("--stop-on-diff", action="store_true")
     ap.add_argument("--resume", help="L:RR: start in room RR of level L with the equipment of --kit, then play on")
+    ap.add_argument("--load", help="a checkpoint tag under BOT_CKPT (t<task>_<tag>, without the side's name): both "
+                    "sides start from it, at that task")
+    ap.add_argument("--quest", type=int, default=1, choices=[1, 2])
     ap.add_argument("--kit", type=Path, help="the log of the run that stopped: its last items, rupees, keys, hearts")
     args = ap.parse_args()
+    routes.QUEST = args.quest
     start = None
     if args.resume:
+        global RESUMED
+        RESUMED = True
         lv, rm = args.resume.split(":")
         start = (int(lv), int(rm, 16))
         kits = last_kits(args.kit)
@@ -135,7 +162,7 @@ def main() -> None:
     if args.only != "ST":
         sides.append(Side("NES", Nes(), log=log))
     if args.only != "NES":
-        prg = build_port(PROJECT / "build" / ("bot_resume" if start else "bot"), start)
+        prg = build_port(PROJECT / "build" / ("bot_resume" if start else "bot"), start, args.quest)
         tos = Path(os.environ["TOS"])
         port = Port(args.out / "hatari", prg, tos)
         sides.append(Side("ST", port, ST.PortTables(prg.parent / "generated"), log=log))
@@ -143,24 +170,35 @@ def main() -> None:
         # the level's map comes from the ROM: read it on a NES that is then put away
         import dungeon
         ns = Side("NES", Nes(), log=log)
-        new_game(ns)
+        new_game(ns, args.quest)
         ns.drv.warp(*start)
         ns.wait_play(600)
         dungeon.load_level(ns)
         ns.drv.close()
-    for side in sides:
+    if args.load:
+        ck = Path(os.environ["BOT_CKPT"])
+        for side in sides:
+            side.restore(ck / f"{side.name}_{args.load}.sav")
+            side.cheat = True
+            log(f"{side.name}: from checkpoint {args.load}; {side.s.summary()}")
+        args.from_task = int(args.load[1:3])
+    for side in sides if not args.load else ():
         if start and side.name == "ST":
             side.step((), 60)           # the build begins in the room, past the title
             side.wait_play(600)
             side.cheat = True
         else:
-            new_game(side)
+            new_game(side, args.quest)
             if start:
                 side.drv.warp(*start)
                 side.wait_play(600)
-        if start:
-            load_kit(side, kits[side.name])
+        if start or args.kit:
+            load_kit(side, (kits if start else last_kits(args.kit))[side.name])
         log(side.s.summary())
+        if side.name == "NES" and args.quest == 2 and side.drv.mem[0x62D] != 1:
+            log("NES: the game did not start in the Second Quest")
+        if side.name == "ST" and args.quest == 2 and not side.drv.v("QUEST"):
+            log("ST: the game did not start in the Second Quest")
 
     def watchdog() -> None:
         # a bot that thinks without stepping a frame for minutes is in a loop of its own: say where, and end the run
@@ -183,7 +221,8 @@ def main() -> None:
     tasks = routes.ROUTES[args.tasks]
     if start:
         # from the level it starts in to the end of the route
-        tasks = [t for t in tasks if t[0].startswith("Level ") and int(t[0].split()[1]) >= start[0]]
+        names = [t[0] for t in tasks]           # from the level it starts in to the end of the route
+        tasks = tasks[names.index(f"Level {start[0]}"):]
     results = []
     for k, (name, fn) in enumerate(tasks):
         if k < args.from_task:
@@ -191,6 +230,9 @@ def main() -> None:
         log(f"== task {k}: {name}")
         outcome = {}
         for side in sides:
+            side.task = k
+            if not (args.load and k == args.from_task):
+                side.checkpoint("start")
             t0 = side.frames
             try:
                 fn(side)
