@@ -27,13 +27,47 @@ def free(tiles, x: int, y: int) -> bool:
     return walkable(tiles[row][c]) and walkable(tiles[row][min(c + 1, 31)])
 
 
+# LadderRoomsOW: the screens where the ladder is put down over the water (CheckLadder; ow_ladder_ok checks $8D-$98)
+LADDER_ROOMS = (0x17, 0x18, 0x19, 0x27, 0x4F, 0x5F)
+
+
+def water(tiles, x: int, y: int) -> bool:
+    """The node's feet are on water the ladder spans (tiles $8D-$98) and nothing worse."""
+    row = (y + 0x0B - 0x40) >> 3
+    if not 0 <= row < 22:
+        return False
+    c = x >> 3
+    pair = (tiles[row][c], tiles[row][min(c + 1, 31)])
+    wet = [t for t in pair if not walkable(t)]
+    return bool(wet) and all(0x8D <= t <= 0x98 for t in wet)
+
+
+def ladder_hops(tiles, n):
+    """The free nodes the ladder takes Link to from the free node n: one square of water (two or three nodes of it)
+    and land at most 32 pixels on, straight ahead (as dungeon moats, brain.Side.path)."""
+    for dx, dy in ((8, 0), (-8, 0), (0, 8), (0, -8)):
+        if not water(tiles, n[0] + dx, n[1] + dy):
+            continue
+        for k in (2, 3, 4):
+            m = (n[0] + dx * k, n[1] + dy * k)
+            if not (X0 <= m[0] <= X1 and Y0 <= m[1] <= Y1):
+                break
+            if free(tiles, *m):
+                yield m, (dx, dy), k
+                break
+            if not water(tiles, *m):
+                break
+
+
 class OWGraph:
-    def __init__(self, quest: int = 1):
+    def __init__(self, quest: int = 1, ladder: bool = False):
+        """ladder: Link has it, so in LADDER_ROOMS a square of water joins the land on its two sides."""
         import compare_ow_tiles as C
         self.rooms = C.expected(quest, ({}, []))
         self.comp = {}          # (room, node) -> component id
         for room, tiles in enumerate(self.rooms):
             cid = 0
+            hop = ladder and room in LADDER_ROOMS
             for y in range(Y0, Y1 + 1, 8):
                 for x in range(X0, X1 + 1, 8):
                     if (room, (x, y)) in self.comp or not free(tiles, x, y):
@@ -42,8 +76,10 @@ class OWGraph:
                     self.comp[(room, (x, y))] = cid
                     while q:
                         n = q.popleft()
-                        for dx, dy in ((8, 0), (-8, 0), (0, 8), (0, -8)):
-                            m = (n[0] + dx, n[1] + dy)
+                        nxt = [(n[0] + dx, n[1] + dy) for dx, dy in ((8, 0), (-8, 0), (0, 8), (0, -8))]
+                        if hop:
+                            nxt += [m for m, _, _ in ladder_hops(tiles, n)]
+                        for m in nxt:
                             if X0 <= m[0] <= X1 and Y0 <= m[1] <= Y1 and (room, m) not in self.comp and free(tiles, *m):
                                 self.comp[(room, m)] = cid
                                 q.append(m)
@@ -83,14 +119,19 @@ class OWGraph:
             c = best[1]
         return (room, c)
 
-    def route(self, room: int, x: int, y: int, target_room: int, avoid=(), allow=lambda room, d: True):
-        """List of (room, direction, (next room, part)) moves from Link's place to any part of target_room."""
+    def parts_with(self, room: int, nodes) -> set:
+        """The parts of the screen that hold any of the nodes."""
+        return {self.comp[(room, n)] for n in nodes if (room, n) in self.comp}
+
+    def route(self, room: int, x: int, y: int, target_room: int, avoid=(), allow=lambda room, d: True, parts=None):
+        """List of (room, direction, (next room, part)) moves from Link's place to any part of target_room (or to one
+        of the given parts of it)."""
         start = self.component(room, x, y)
         prev = {start: None}
         q = collections.deque([start])
         while q:
             n = q.popleft()
-            if n[0] == target_room:
+            if n[0] == target_room and (parts is None or n[1] in parts):
                 out = []
                 while prev[n] is not None:
                     m = n

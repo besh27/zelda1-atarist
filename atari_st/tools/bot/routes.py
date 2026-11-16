@@ -19,11 +19,15 @@ MAZES = (0x61, 0x1B)
 ARMOS = {0x24: 0xE0, 0x0B: 0xB0, 0x1C: 0xB0, 0x22: 0x30, 0x34: 0x40, 0x3D: 0x90, 0x4E: 0xA0}      # the Lost Woods and the Lost Hills loop back on themselves
 
 
-def graph() -> OWGraph:
+def graph(side: Side | None = None) -> OWGraph:
+    """The overworld's graph; with the ladder (item slot 12) the water of LadderRoomsOW is crossed too."""
     global _graph
     if _graph is None:
-        _graph = OWGraph(QUEST)
-    return _graph
+        _graph = {}
+    ladder = bool(side is not None and len(side.s.items) > 12 and side.s.items[12])
+    if ladder not in _graph:
+        _graph[ladder] = OWGraph(QUEST, ladder)
+    return _graph[ladder]
 
 
 def info(side: Side) -> dict:
@@ -84,8 +88,13 @@ def ride_raft(side: Side, room: int) -> None:
     side.wait_play(1200)
 
 
-def goto_screen(side: Side, target: int, tries: int = 6) -> None:
-    g = graph()
+def goto_screen(side: Side, target: int, tries: int = 6, near=None) -> None:
+    """Walk to the screen target; with near (a set of nodes on it), to the part of it from which one of them can be
+    walked to (a screen cut in two by trees or water is entered from the side that matters)."""
+    g = graph(side)
+    parts = g.parts_with(target, near) if near else None
+    if parts == set():
+        parts = None
     avoid = ()
     for _ in range(tries * 8):
         side.step((), 2)
@@ -102,12 +111,13 @@ def goto_screen(side: Side, target: int, tries: int = 6) -> None:
             side.log(f"{side.name}: walked into a cave in {room:02X} on the way; out again")
         side.wait_play()
         s = side.s
-        if s.level == 0 and s.room == target and s.mode == ST.PLAY:
+        if s.level == 0 and s.room == target and s.mode == ST.PLAY and (
+                parts is None or g.component(s.room, s.x, s.y)[1] in parts):
             return
         if s.level:
             raise Stuck(f"{side.name}: in a dungeon, not on the overworld")
         route = g.route(s.room, s.x, s.y, target, avoid,
-                        lambda r, d: maze_allow(r, d) and (d != "RAFT" or bool(side.s.items[9])))
+                        lambda r, d: maze_allow(r, d) and (d != "RAFT" or bool(side.s.items[9])), parts)
         if not route:
             raise Stuck(f"{side.name}: no route from {s.room:02X} to {target:02X}")
         room, d, want = route[0]
@@ -191,8 +201,26 @@ def cave_leave(side: Side) -> None:
     side.step((), 20)
 
 
+def stand_nodes(side: Side, room: int) -> set:
+    """Where Link has to stand on the screen to open its hidden spot (or, with none, below its doorway): goto_screen
+    brings him into the part of the screen that holds them."""
+    if room in ARMOS:
+        return {sq_node(5, ARMOS[room] >> 4)}
+    sec = info(side)[room].get("secret")
+    if sec:
+        kind, square = sec
+        row, col = divmod(square, 16)
+        far = 2 if kind == "burn" else 1
+        return {sq_node(row + dr, col + dc) for dr, dc in ((far, 0), (-far, 0), (0, far), (0, -far))}
+    try:
+        ex, ey = entrance(side, room)
+    except Exception:       # noqa: BLE001
+        return set()
+    return {(ex, ey + 16), (ex, ey + 8)}
+
+
 def visit_cave(side: Side, room: int, take: int | None = None, money: int = 0, show_letter: bool = False) -> None:
-    goto_screen(side, room)
+    goto_screen(side, room, near=stand_nodes(side, room))
     reveal(side, room)
     if money:
         side.give("rupees", max(side.s.rupees, money))
@@ -311,7 +339,7 @@ def find_stairs(side: Side):
 
 def enter_level(side: Side, n: int) -> None:
     room = (LEVEL_SCREENS2 if QUEST == 2 else LEVEL_SCREENS)[n]
-    goto_screen(side, room)
+    goto_screen(side, room, near=None if QUEST == 1 and n == 7 else stand_nodes(side, room))
     if QUEST == 1 and n == 7:
         # the pond of Level 7 dries up at the recorder's tune and shows the stairs
         if not side.s.items[5]:
@@ -341,7 +369,14 @@ def enter_level(side: Side, n: int) -> None:
         ex, ey = stairs[0]                  # stairs on show that the attributes do not place (the pond of Level 7)
         side.log(f"{side.name}: the stairs of level {n} are at ({ex},{ey})")
     side.get_tiles(force=True)
-    side.walk({(ex, ey + 16), (ex, ey + 8), (ex, ey)}, limit=3000)
+    goal = {(ex, ey + 16), (ex, ey + 8), (ex, ey)}
+    if side.path(goal) is None:
+        # the stairs lie in another part of the screen than the spot they were opened from (a burnt bush in a hedge
+        # is burnt from one side and walked into from the other): round to that part, then onto the stairs
+        side.log(f"{side.name}: the stairs of level {n} at ({ex},{ey}) are reached from another part of {room:02X}")
+        goto_screen(side, room, near={(ex + 16, ey), (ex - 16, ey), (ex, ey + 16), (ex, ey - 16)})
+        side.get_tiles(force=True)
+    side.walk(goal, limit=3000)
     side.hold_until({UP}, lambda s: s.level == n, 400)
     side.wait_play(600)
     if side.s.level != n:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import collections
 from pathlib import Path
 
+import owmap
 import state as ST
 
 OW_WALKABLE = {0x8D, 0x91, 0x9C, 0xAC, 0xAD, 0xCC, 0xD2, 0xD5, 0xDF}
@@ -221,6 +222,13 @@ class Side:
                             break
                         if not self._moat(*m):
                             break
+            if (not self.s.level and self.s.room in owmap.LADDER_ROOMS and len(self.s.items) > 12
+                    and self.s.items[12] and self.node_free(*n)):
+                # the overworld's ladder over a square of water (the six LadderRoomsOW screens)
+                for m, (dx, dy), k in owmap.ladder_hops(self.tiles, n):
+                    if x0 <= m[0] <= x1 and y0 <= m[1] <= y1 and m not in prev and self.node_free(*m):
+                        prev[m] = (n, {(8, 0): RIGHT, (-8, 0): LEFT, (0, 8): DOWN, (0, -8): UP}[(dx, dy)], k)
+                        q.append(m)
         return None
 
     def _moat(self, x: int, y: int) -> bool:
