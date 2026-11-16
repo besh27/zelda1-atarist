@@ -97,7 +97,7 @@ class Side:
         d = os.environ.get("BOT_CKPT")
         if not d:
             return
-        d = Path(d)
+        d = Path(d).resolve()
         d.mkdir(parents=True, exist_ok=True)
         name = f"{self.name}_t{getattr(self, 'task', 0):02d}_{tag}"
         self.drv.save(d / (name + ".sav"))

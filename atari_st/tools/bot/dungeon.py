@@ -565,7 +565,9 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
             last_room = room
             side.checkpoint(f"L{lvl.number}_{arrival:03d}_{room:02X}")
             if os.environ.get("BOT_ROOMSHOTS"):
-                side.drv.snapshot(Path(os.environ["BOT_ROOMSHOTS"]) / f"{side.name}_L{lvl.number}_{arrival:03d}_{room:02X}.png")
+                shots = Path(os.environ["BOT_ROOMSHOTS"]).resolve()
+                shots.mkdir(parents=True, exist_ok=True)
+                side.drv.snapshot(shots / f"{side.name}_L{lvl.number}_{arrival:03d}_{room:02X}.png")
         opened = False
         if (lvl.d[room] & 0x40) and (room, arrival) not in pushed and not foes(side):
             if push_block(side):
