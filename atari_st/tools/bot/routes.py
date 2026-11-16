@@ -5,6 +5,8 @@ secret tables (owinfo.py). Development tooling only."""
 from __future__ import annotations
 
 from functools import partial
+import os
+from pathlib import Path
 
 import state as ST
 from brain import DIRBIT, DOWN, LEFT, RIGHT, UP, Side, Stuck
@@ -393,6 +395,12 @@ def play_level(side: Side, n: int) -> None:
         side.give_item(2, 2, "the silver arrow")
     dungeon.explore(side)
     if getattr(side, "won", False):
+        shots = os.environ.get("BOT_ROOMSHOTS")
+        if shots:                               # the credits, a picture every 600 frames, to compare the two
+            step = int(os.environ.get("BOT_CREDITS_STEP", "600"))
+            for k in range(4800 // step):
+                side.step((), step)
+                side.drv.snapshot(Path(shots).resolve() / f"{side.name}_credits_{k}.png")
         return                                  # Zelda's thanks and the credits: the game is over
     if side.s.level and (n == 9 or not side.s.triforce & (1 << (n - 1))):
         side.log(f"{side.name}: level {n} is not finished; leaving it")

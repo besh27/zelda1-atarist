@@ -182,6 +182,15 @@ def main() -> None:
             side.cheat = True
             log(f"{side.name}: from checkpoint {args.load}; {side.s.summary()}")
         args.from_task = int(args.load[1:3])
+        if args.only == "ST" and sides[0].s.level:
+            # the level's map comes from the ROM: read it on a NES that is then put away
+            import dungeon
+            ns = Side("NES", Nes(), log=log)
+            new_game(ns, args.quest)
+            ns.drv.warp(sides[0].s.level, sides[0].s.room)
+            ns.wait_play(600)
+            dungeon.load_level(ns)
+            ns.drv.close()
     for side in sides if not args.load else ():
         if start and side.name == "ST":
             side.step((), 60)           # the build begins in the room, past the title

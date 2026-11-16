@@ -109,7 +109,19 @@ def stairs_node(side: Side):
 
 # -- fighting --------------------------------------------------------------------------------------------------------
 GANON = 0x3E
-GANON_DOORS = frozenset({(0x52, N), (0x41, E), (0x43, W), (0x32, S)})   # the ways into $42, Ganon's room
+POWER = 0x0E                # the Triforce of Power: the item of Ganon's room ($42 in the First Quest, $17 in the Second)
+
+
+def ganon_room(lvl: Level):
+    return next((r for r in level_rooms(lvl) if lvl.item(r) == POWER), None)
+
+
+def ganon_doors(lvl: Level) -> frozenset:
+    """The ways into Ganon's room."""
+    g = ganon_room(lvl)
+    if g is None:
+        return frozenset()
+    return frozenset((g - STEP[d], d) for d in (N, E, W, S) if lvl.door(g, OPPOSITE[d]) != WALL)
 
 
 def rescue_zelda(side: Side) -> bool:
@@ -586,9 +598,11 @@ def explore(side: Side, limit_rooms: int = 300) -> None:
                     return
         avoid = bad | {(r, d) for (r, d, e) in cut if r == room and e == entry}
         if lvl.number == 9 and side.s.items[2] < 2:
-            avoid = avoid | GANON_DOORS            # no silver arrow yet: Ganon cannot be killed, keep out of his room
+            avoid = avoid | ganon_doors(lvl)           # no silver arrow yet: Ganon cannot be killed, keep out of his room
         worn = {r for r, k in stair_uses.items() if k >= 4}
-        nxt = plan(lvl, room, visited, used_stairs, taken, avoid, worn, cut)
+        # Ganon is dead (his room's Triforce of Power taken): straight on to Zelda, the rest of the level can wait
+        to_zelda = lvl.number == 9 and ganon_room(lvl) in taken
+        nxt = plan(lvl, room, visited, used_stairs, taken, avoid, worn, cut, to=lvl.triforce if to_zelda else None)
         if opened and room not in worn and stair_uses[room] < 2 and stairs_node(side) is not None:
             nxt = ("stairs", room)             # the block has just opened the way to them: they will be shut next time
         if nxt is None and (bad or cut or stair_uses or used_stairs) and retries < 3 and not side.s.triforce & (1 << (lvl.number - 1)):
@@ -738,13 +752,15 @@ def level_rooms(lvl: Level):
     return seen
 
 
-def plan(lvl: Level, room: int, visited, used_stairs, taken, bad=frozenset(), worn=frozenset(), cut=frozenset()):
+def plan(lvl: Level, room: int, visited, used_stairs, taken, bad=frozenset(), worn=frozenset(), cut=frozenset(), to=None):
     """The first move towards the nearest room not yet seen (the triforce room last). A search over (room, the door
     he came in by): water or blocks may part a room, so a door cut off from one doorway (cut) may be open from another.
-    Coming up stairs, every door cut off from any doorway is left out."""
+    Coming up stairs, every door cut off from any doorway is left out. With to, the way to that room alone."""
     rooms = level_rooms(lvl)
     tri = lvl.triforce
     def wanted(r):
+        if to is not None:
+            return r == to
         return r not in visited and r != tri
     def shut(r, d, e):
         if (r, d) in bad and r == room:
